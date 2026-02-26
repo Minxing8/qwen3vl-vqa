@@ -1,0 +1,124 @@
+#!/bin/bash
+set -e
+
+# ===== Adjust these =====
+# IMAGE_DIR="/proj/berzelius-2024-90/users/x_liumi/Qwen3-VL/data/test"
+# OUTPUT_DIR="/proj/berzelius-2024-90/users/x_liumi/Qwen3-VL/output/Qwen3-VL/test"
+IMAGE_DIR="/proj/berzelius-2024-409/users/dataset/ins/24_3/media_files/2024-05-01_2024-07-01"
+OUTPUT_DIR="/proj/berzelius-2024-409/users/x_liumi/Qwen3-VL/output/Qwen3-VL/output/version_6_new/topic_guided_unguided_toxicity/split_3"
+MODEL_NAME="Qwen/Qwen3-VL-8B-Instruct"
+
+NUM_GPUS=8
+NNODES=1
+RDZV_ENDPOINT="localhost:29500"
+
+BATCH_SIZE=4
+NUM_SAMPLES=200000
+
+# Match notebook: no shuffle unless you explicitly want it
+# SHUFFLE=0
+# SEED=""
+
+SHUFFLE=1
+SEED=2026
+
+# Match notebook: MIN/MAX unset
+# MIN_PIXELS=""
+# MAX_PIXELS=""
+
+MIN_PIXELS=$((256*32*32))
+MAX_PIXELS=$((1280*32*32))
+
+# MIN_PIXELS=$((256*32*32))
+# MAX_PIXELS=$((896*32*32)) 
+
+MAX_NEW_TOKENS=500
+TEMPERATURE=0.6
+TOP_P=0.9
+TOP_K=50
+REPETITION_PENALTY=1.05
+
+DTYPE="bfloat16"
+FLASH_ATTN2=0
+
+QUESTIONS=(
+  # ReID
+  # "Describe the person’s appearance for person re-identification. Focus only on clothing, colors, patterns, shoes, bags or backpacks, hats, hair, and other worn or carried items. Do NOT mention background, scene, camera view, or location. Output 1–2 concise sentences."
+
+  # Social media
+  # "Does this image contain any visible text? Answer Yes or No. If Yes, transcribe the text exactly as it appears without paraphrasing or interpretation." # OCR
+  # "Does the image contain one or more humans? Answer Yes or No.\nIf Yes, for each visible person, provide a separate description including:\n- Person number (e.g., Person 1, Person 2, ...),\n- Name if recognizable,\n- Gender,\n- Approximate age,\n- Outfit,\n- Activity or pose,\n- Facial expression,\n- Interactions with other people (if any).\nKeep the description concise and factual, avoiding assumptions." # Human
+  # "Provide a concise description of the image in 2–3 sentences, mentioning the key objects, people, actions, background, texts, and overall scene." # General
+  # "Does the image contain violent, hateful, unsafe, 18+, or any other offensive content (e.g. alcohol, weapons, blood, cigarette, insulting gestures) or texts? Answer Yes or No. If Yes, specify the category clearly." # Toxicity
+  # "What is the main theme of the image? Choose the most specific category that fits best from: politics, entertainment, sports, technology, anime, gaming, fashion, beauty/makeup, photography, food, pets/animals, nature, travel, memes, advertising, daily life, art, health/fitness, science, religion, history, news/crime. Avoid 'other' unless nothing else fits. Provide a short justification." # Topic
+  # "If the image contains one or more humans, rate each visible person’s facial and/or body attractiveness on a scale of 1–10, where 1 = least attractive and 10 = most attractive, based on general visual aesthetics, symmetry, and presentation.\nIf no humans are visible, answer 'No human detected.'\nProvide your answer in the format:\nPerson 1: [score]; Person 2: [score]; ...\nOptionally include a one-sentence justification." # Attractiveness (1–10)
+  # "If the image contains one or more humans, classify each visible person’s facial and/or body attractiveness into one of three levels: 'Low', 'Medium', or 'High', based on general aesthetic impression, symmetry, and presentation.\nIf no humans are visible, answer 'No human detected.'\nProvide your answer in the format:\nPerson 1: [level]; Person 2: [level];\nOptionally include a short justification." # Attractiveness (Low/Med/High)
+  # "Rate the overall toxicity level of the image on a continuous scale from 0.0 to 1.0, where 0.0 means completely safe or non-toxic, and 1.0 means extremely toxic or unsafe.\nToxicity includes explicit, offensive, violent, hateful, unsafe, 18+, or otherwise inappropriate content such as alcohol, weapons, blood, cigarettes, or insulting gestures, as well as toxic text content.\nIf no such elements appear, give 0.0.\nProvide the numeric score and a short justification." # Toxicity (score)
+
+  # Social media version 5
+  # OCR
+  # "You are an OCR and layout extraction model. Process the image in two distinct phases: Phase 1: Raw Transcription Detect and transcribe: EVERY piece of visible text in the image exactly as it appears. Include everything: headlines, body text, logos, brand names, and watermarks. Do not omit anything. Preserve capitalization and line breaks. Phase 2: Extract the text based on these rules: 1. Headline: The most prominent large text. 2. Subtitle: The smaller supporting text directly associated with the headline. 3. Exclusion Rule: In this phase ONLY, discard all brand names, logos (e.g., \"12NEWS\"), URLs, and watermarks. Output Format: Output the result as valid JSON only: { \"has_text\": boolean, \"transcription\": \"String containing EVERY word from Phase 1\", \"headline\": \"String or null\", \"subtitle\": \"String or null\", \"confidence\": float }"
+  # Type & Quality & Aeththetics
+  # "Classify the image format into exactly one label using the definitions below. Return the label name only (not the description). Formats (label: description): photo — real-world camera photo of people, places, or objects (not a UI capture). screenshot — capture of an app or website showing UI elements (menus, buttons, bars). news_card — designed news graphic, broadcast overlay, weather alert, or security footage presenting a headline (not a screenshot). flyer_poster — event or announcement layout with date, time, location, or call-to-action. advertisement_graphic — promotional graphic for a product, brand, or service. infographic — visual explanation using charts, statistics, or structured facts. document — scanned or photographed document, form, or letter. painting — hand-drawn, painted, sketched, illustrated, or comic-style artwork. meme — humorous or reaction-style image using a meme format. other — none of the above formats clearly apply. If multiple formats seem possible, choose the closest single match. Use \"other\" only if no format reasonably fits. Also provide two 1–5 ratings:  Aesthetic score (visual appeal/composition, independent of resolution): 1 — very poor: cluttered, awkward layout, unpleasant visual balance. 2 — below average: weak composition or distracting arrangement. 3 — average: acceptable, clear, but not visually strong. 4 — good: well-composed, balanced, visually pleasing. 5 — excellent: highly appealing, polished, professional-looking. Quality score (technical image quality: sharpness, resolution, noise, artifacts): 1 — very poor: blurry/low-res, heavy artifacts, hard to view. 2 — below average: noticeable blur/low-res or artifacts. 3 — average: usable and readable, minor flaws. 4 — good: sharp, clear, minimal artifacts. 5 — excellent: very sharp, high-res, clean and well-exposed. Assign a confidence score between 0 and 1 indicating how confident you are that the image_type classification is correct. Return valid JSON only: {  \"image_type\": \"<one label>\",  \"aesthetic_score\": number,  \"quality_score\": number,  \"confidence\": number } Do not return multiple labels or include any text outside the JSON."
+  # "Classify the image format into exactly one label using the definitions below. Return the label name only (not the description). Formats (label: description): photo — real-world camera photo of people, places, or objects (not a UI capture). screenshot — capture of an app or website showing UI elements (menus, buttons, bars). news_card — designed news graphic, broadcast overlay, weather alert, or security footage presenting a headline (not a screenshot). flyer_poster — event or announcement layout with date, time, location, or call-to-action. advertisement_graphic — promotional graphic for a product, brand, or service. infographic — visual explanation using charts, statistics, or structured facts. document — scanned or photographed document, form, or letter. painting — hand-drawn, painted, sketched, illustrated, or comic-style artwork. meme — humorous or reaction-style image using a meme format. other — none of the above formats clearly apply. If multiple formats seem possible, choose the closest single match. Use \"other\" only if no format reasonably fits. Also provide two 1–5 ratings:  Aesthetic score (visual appeal/composition, independent of resolution): 1 — very poor: cluttered, awkward layout, unpleasant visual balance. 2 — below average: weak composition or distracting arrangement. 3 — average: acceptable, clear, but not visually strong. 4 — good: well-composed, balanced, visually pleasing. 5 — excellent: highly appealing, polished, professional-looking. Quality score (technical image quality: sharpness, resolution, noise, artifacts): 1 — very poor: blurry/low-res, heavy artifacts, hard to view. 2 — below average: noticeable blur/low-res or artifacts. 3 — average: usable and readable, minor flaws. 4 — good: sharp, clear, minimal artifacts. 5 — excellent: very sharp, high-res, clean and well-exposed. Assign a confidence score between 0 and 1 indicating how confident you are that the image_type classification is correct and a one-sentence justification. Return valid JSON only: {  \"image_type\": \"<one label>\",  \"aesthetic_score\": number,  \"quality_score\": number,  \"confidence\": number, \"justification\": string } Do not return multiple labels or include any text outside the JSON."
+  # Person
+  # "Analyze the image and determine if it contains one or more humans. Answer Yes or No. If Yes, count how many people are visible. Identify the most prominent person in the image (e.g., the largest, clearest, most central, or primary subject). Ignore all other people. Provide the following information for this single prominent person only: - recognized (true/false) - name (only if explicitly recognizable, otherwise null) - gender (if visually apparent, otherwise null) - age_range (approximate, only in numbers) - outfit - activity_or_pose - facial_expression - interaction_with_others (if any)  Assign a confidence score between 0 and 1, indicating how confident you are that the prominent person is correct. Also, assess the following based only on what is clearly visible: Attractiveness score (1-5) (set to null if the face is unclear or partially visible): Based on Western standards of attractiveness, and general agreement among most people, how attractive is the person in the image? Please provide a rating on a scale from 1 to 5. For example 1 – Very unattractive 2 – Unattractive 3 – Average 4 – Attractive 5 – Very attractive. Provide a one-sentence justification for the attractiveness score. Presentation score (1–5): How visually polished and well-presented the person appears based on visible grooming, makeup (if any), clothing coordination, and overall styling. Scale: 1 — very unpolished. 2 — below average presentation. 3 — average, neat everyday appearance. 4 — good presentation. 5 — excellent presentation.  Facial structure characteristics (set to null if the face is unclear or partially visible): - facial_geometry: Low / Medium / High - facial_symmetry: Low / Medium / High - facial_proportions: Low / Medium / High Return valid JSON only in the following format: { \"has_human\": Boolean,  \"person_count\": number, \"person\": { \"recognized\": boolean, \"name\": string | null, \"gender\": string | null, \"age_range\": string | null, \"outfit\": string | null, \"activity_or_pose\": string | null, \"facial_expression\": string | null, \"interaction_with_others\": string | null, \"attractive\": number | null, \"attractiveness_justification\": string | null, \"presentation_score\": number | null, \"facial_geometry\": \"Low\" | \"Medium\" | \"High\" | null, \"facial_symmetry\": \"Low\" | \"Medium\" | \"High\" | null, \"facial_proportions\": \"Low\" | \"Medium\" | \"High\" | null, \"confidence\": number}|null}"
+  # Topic
+  # "Choose the primary topic of the image. Pick exactly ONE topic_id from the list below and return the topic_id only (not the description text). Use \"other\" ONLY if none of the listed topics clearly apply. Topics (topic_id: description): politics: government, elections, public policy, political actors. crime: criminal acts, violence, investigations, arrests. natural_disaster: earthquakes, floods, fires, storms, natural damage. entertainment: celebrities, movies, music, TV, pop culture. sports: athletic events, teams, players, competitions. technology: software, hardware, AI, digital products. science: research, discoveries, space, experiments. health: medicine, disease, public health, wellness. fitness: exercise, workouts, physical training. gaming: video games, esports, gaming culture. anime: anime or manga-related content. fashion: clothing, style, accessories. beauty_makeup: cosmetics, skincare, makeup, appearance. food: cooking, meals, restaurants. pets_animals: animals or pets as the main subject. nature: landscapes, wildlife, natural scenes. travel: tourism, destinations, travel experiences. art: creative artwork or artistic expression. photography: photography as a subject (gear, technique, portfolios). religion: religious beliefs, rituals, symbols. history: historical events figures or eras memes humorous or reaction-style meme content advertising promotional or marketing-focused content daily_life everyday personal moments or routine activities other none of the above topics clearly apply If multiple topics seem possible choose the closest single match Only use \"other\" if no category reasonably fits Also output a confidence score from 0 to 1 and a one-sentence justification Return JSON only {  \"topic\": \"<topic_id>\",  \"confidence\": number  \"justification\": string} Do not include any text outside the JSON."
+  # Image Description
+  # "Describe the image using short, factual phrases. Only describe what is clearly visible and avoid assumptions. Fields: - people: visible people or their appearance. - objects: key visible objects. - action: what is happening. - background: setting or environment. - visible_text: any clearly readable text. Use at most 12 words per field. If a field is not applicable, set it to null. Assign a confidence score between 0 and 1 indicating how confident you are that this description accurately represents the image. Use high confidence only if the scene is clear and unambiguous. Return valid JSON only: { \"people\": string | null, \"objects\": string | null, \"action\": string | null, \"background\": string | null, \"visible_text\": string | null, \"confidence\": number } Do not include any text outside the JSON object."
+
+  # Social media version 6
+  # Topic guided
+  "You are an image topic classification model. Analyze the provided image and choose the single most appropriate primary topic based strictly on visible content (objects, actions, symbols, and any visible text). Do not infer context beyond what is visually evident. Pick exactly ONE topic_id from the list below. Use \"others\" ONLY if none of the listed topics clearly apply. If the image shows criminal activity involving weapons, classify it as \"crime\" unless the primary subject is war/armed conflict or political/military activity. Topics (topic_id: description): climate_environment (e.g., weather (snow, rain, heatwave, etc), climate change, environmental issues, pollution, conservation, wildlife protection, natural ecosystems). sports (e.g., professional or amateur sports events, teams, athletes, competitions). politics (e.g., government, elections, public policy, political leaders, political events or protests). technology_science (e.g., technology, scientific research, innovation, space, engineering, discoveries). entertainment (e.g., celebrities, movies, music, television, pop culture, media events). health_medicine (e.g., medicine, healthcare, disease, public health, medical research, hospitals). business_finance (e.g., companies, markets, economy, finance, trade, jobs, startups, investments, taxation, tax forms, accounting). education (e.g., schools, universities, learning, teaching, exams, academic institutions). religion (e.g., religious beliefs, practices, rituals, religious leaders, symbols, places of worship). art_culture (e.g., art, cultural events, traditions, heritage, museums, cultural expression). food (e.g., cooking, cuisine, restaurants, food production, culinary culture). crime (e.g., criminal acts, investigations, arrests, courts, law enforcement, violence as a crime). travel_transport (e.g., tourism, travel scenes, airports/stations, vehicles/infrastructure when the news focus is mobility or travel). war_conflicts (e.g., soldiers, tanks, trenches, battlefield scenes, military operations, armed conflict zones). others (e.g., provide a topic when none of the above topics clearly apply). Return JSON only in the following format, with no extra text: {\"topic\": \"<topic_id>\", \"confidence\": number, \"justification\": string, \"other_topic\": \"string or null\"} Constraints: confidence is a float between 0.0 and 1.0. justification must be one sentence. If topic is \"others\", provide a short best-fit label in \"other_topic\". If topic is not \"others\", set \"other_topic\" to null"
+  # Toxicity guided
+  "You are an image safety and content analysis model. Analyze the provided image and determine whether it contains any toxic, harmful, unsafe, or sensitive content based strictly on visible elements in the image (objects, actions, symbols, and text). Evaluate the image using the following categories: 1. Hate, Humiliation, or Harassment (e.g., hate symbols, slurs, degrading or threatening behavior toward individuals or groups) 2. Violence, Harm, or Cruelty (e.g., physical assault, weapons in use, bloodshed, torture, severe injury) 3. Sexual Content (e.g., sexual acts or explicit sexualized behavior) 4. Nudity Content (e.g., exposed genitals or breasts; exclude clearly neutral medical or artistic contexts) 5. Criminal Planning or Activity (e.g., theft, assault, terrorism, or crime preparation) 6. Illegal Weapons or Substance Abuse (e.g., illegal drugs, visible drug use, bomb-making materials; do not assume illegality unless visually obvious) 7. Self-Harm or Suicide (e.g., self-injury, suicide attempts, encouragement of self-harm) 8. Animal Cruelty (e.g., abuse, torture, or killing of animals outside lawful hunting or food preparation) 9. Disasters or Emergencies (e.g., fires, floods, explosions, accidents, or medical emergencies) Rules:- Base classification only on visible content; do not infer intent beyond what is visually evident.- Do not describe graphic details.- Multiple categories may be true for a single image.- Fictional, cartoon, or animated depictions of harmful content must still be classified; adjust scale based on severity and realism. Primary Category:- Select one primary_category representing the most severe or dominant form of toxicity present.- If no toxic content is detected, set primary_category to null. Output valid JSON only using the schema below, with no explanations or extra text:{\"is_toxic\": Boolean,\"primary_category\": \"string or null\",\"categories\": {\"hate_harassment\": boolean, \"violence_harm\": boolean, \"sexual_content\": Boolean, \"nudity\": Boolean, \"criminal_activity\": boolean, \"illegal_weapons_or_drugs\": Boolean, \"self_harm\": Boolean, \"animal_cruelty\": boolean, \"disaster_or_emergency\": Boolean}, \"confidence\": float, \"scale\": number, \"human_review_required\": Boolean} Definitions:- is_toxic is true if any category is true.- confidence is a float between 0.0 and 1.0 representing certainty based on visual clarity and category distinctness.- scale is an integer from 1 to 5 indicating toxicity severity. Scale Definition (1–5): 1 = Least toxic: no toxic content present, or very mild/borderline harmful content (e.g., symbolic or cartoonish harm, mild non-graphic references) 2 = Low toxicity: mild harmful content with limited impact (e.g., non-graphic low-intensity violence, mild harassment) 3 = Moderate toxicity: clearly harmful content without extreme explicitness (e.g., visible violence, hate symbols, implied self-harm) 4 = High toxicity: explicit or intense harmful content (e.g., serious injury, explicit sexual content or nudity, clear criminal acts) 5 = Highly toxic: extreme, graphic, or severely disturbing content (e.g., graphic violence, torture, suicide attempts, severe sexual violence)"
+  # Toxicity unguided
+  "You are an image safety and content analysis model. Analyze the provided image and determine whether it contains any toxic, harmful, unsafe, or sensitive content based strictly on visible elements in the image (objects, actions, symbols, and text). Do consider fictional, cartoon, or animated images if they depict harmful content. Provide multiple labels if required. Do not describe graphic details. Base classification only on visible content; do not infer intent beyond what is visually evident. Provide a confidence (0.0–1.0) indicating how confident you are. Also scale from 1 to 5 indicating toxicity severity where 1 is least toxic and 5 is highly toxic. Give a one-sentence justification. Output valid JSON only using the schema below, with no explanations or extra text:{\"is_toxic\":Boolean,\"labels\": [\"string\"] or null,\"confidence\": float,\"scale\": number, \"justification\": string}"
+
+)
+
+SCRIPT="/proj/berzelius-2024-409/users/x_liumi/Qwen3-VL/vqa/qwen3vl_img_vqa_parallel_v5.py"
+
+PIXEL_FLAGS=()
+[[ -n "$MIN_PIXELS" ]] && PIXEL_FLAGS+=( --min_pixels "$MIN_PIXELS" )
+[[ -n "$MAX_PIXELS" ]] && PIXEL_FLAGS+=( --max_pixels "$MAX_PIXELS" )
+
+SHUFFLE_FLAG=()
+[[ "$SHUFFLE" == "1" ]] && SHUFFLE_FLAG+=( --shuffle )
+
+SEED_FLAG=()
+# Only pass seed if shuffle is enabled and seed is provided
+if [[ "$SHUFFLE" == "1" && -n "$SEED" ]]; then
+  SEED_FLAG+=( --seed "$SEED" )
+fi
+
+NUM_SAMPLES_FLAG=()
+[[ -n "$NUM_SAMPLES" ]] && NUM_SAMPLES_FLAG+=( --num_samples "$NUM_SAMPLES" )
+
+FA2_FLAG=()
+[[ "$FLASH_ATTN2" == "1" ]] && FA2_FLAG+=( --flash_attn2 )
+
+torchrun \
+  --nproc_per_node="$NUM_GPUS" \
+  --nnodes="$NNODES" \
+  --rdzv_backend=c10d \
+  --rdzv_endpoint="$RDZV_ENDPOINT" \
+  "$SCRIPT" \
+    --image_dir "$IMAGE_DIR" \
+    --output_dir "$OUTPUT_DIR" \
+    --model_name "$MODEL_NAME" \
+    --batch_size "$BATCH_SIZE" \
+    --dtype "$DTYPE" \
+    --max_new_tokens "$MAX_NEW_TOKENS" \
+    --temperature "$TEMPERATURE" \
+    --top_p "$TOP_P" \
+    --top_k "$TOP_K" \
+    --repetition_penalty "$REPETITION_PENALTY" \
+    --output_confidence \
+    "${PIXEL_FLAGS[@]}" \
+    "${SHUFFLE_FLAG[@]}" \
+    "${SEED_FLAG[@]}" \
+    "${NUM_SAMPLES_FLAG[@]}" \
+    "${FA2_FLAG[@]}" \
+    --questions "${QUESTIONS[@]}"
